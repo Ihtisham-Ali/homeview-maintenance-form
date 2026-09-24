@@ -4,6 +4,56 @@
    CONFIG
    ============================================================ */
 const WEBHOOK_URL = "https://hook.eu1.make.com/9nwpq3h5eheub2qaoxn1vmbxd4n81got";
+const SUPABASE_URL = "https://uymidpurzgjqzmqssjuc.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5bWlkcHVyemdqcXptcXNzanVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNjA2OTYsImV4cCI6MjEwNTgzNjY5Nn0.cAhbIiaM4lZxcz8IBxD4We6VRB7_j_2TXMYEaJy8VV0";
+const SUPABASE_BUCKET = "homereview-files";
+const SUPABASE_TABLE = "homereview_submissions";
+
+function getSupabaseClient() {
+  if (!window._hrSupabase && window.supabase) {
+    window._hrSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+  return window._hrSupabase;
+}
+
+/* Upload files to Supabase Storage and return an array of public URLs */
+async function uploadFilesToSupabase(files, onProgress) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Supabase client is not available");
+
+  const urls = [];
+  const total = files.length;
+  const datePrefix = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+  for (let i = 0; i < total; i++) {
+    if (onProgress) {
+      onProgress(
+        Math.round((i / total) * 80),
+        `Uploading photo ${i + 1} of ${total}…`
+      );
+    }
+    const file = files[i];
+    const random = Math.random().toString(36).substring(2, 10);
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${datePrefix}/${random}_${safeName}`;
+
+    const { error } = await client.storage
+      .from(SUPABASE_BUCKET)
+      .upload(path, file, { cacheControl: "31536000", upsert: false });
+
+    if (error) {
+      console.error(`Upload failed for ${file.name}:`, error);
+      throw new Error(`Upload failed for ${file.name}: ${error.message}`);
+    }
+
+    const { data: urlData } = client.storage
+      .from(SUPABASE_BUCKET)
+      .getPublicUrl(path);
+
+    urls.push(urlData.publicUrl);
+  }
+  return urls;
+}
 
 /* ============================================================
    STATE
@@ -1420,6 +1470,100 @@ function escHtml(s) {
 /* ============================================================
    SUBMISSION
    ============================================================ */
+function buildDbRecord(payload) {
+  const fileUrls = Array.isArray(payload.file_urls) ? payload.file_urls : [];
+  const fullAddress = String(
+    payload.full_address ||
+    (payload.flat_room_number ? `${payload.flat_room_number}, ${payload.address || ""}` : (payload.address || ""))
+  ).trim();
+
+  return {
+    company_name: String(payload.company_name || "Homeview Property Management"),
+    source: String(payload.source || "Homeview Maintenance Portal"),
+    name: String(payload.name || ""),
+    email: String(payload.email || ""),
+    phone: String(payload.phone || ""),
+    address: String(payload.address || ""),
+    flat_room_number: String(payload.flat_room_number || ""),
+    full_address: fullAddress,
+    city: "",
+    postcode: "",
+    category_id: String(payload.category_id || ""),
+    category_label: String(payload.category_label || ""),
+    issue_code: String(payload.issue_code || ""),
+    issue_label: String(payload.issue_label || ""),
+    other_issue_text: String(payload.other_issue_text || ""),
+    further_info: String(payload.further_info || ""),
+    priority: String(payload.priority || "routine"),
+    internal_priority: String(payload.internal_priority || "normal"),
+    keys_allowed: String(payload.keys_allowed || ""),
+    has_pets: String(payload.has_pets || ""),
+    pets_details: String(payload.pets_details || ""),
+    preferred_appointment_slots: String(payload.preferred_appointment_slots || ""),
+    access_instructions: String(payload.access_instructions || ""),
+    troubleshooting_summary: String(payload.troubleshooting_summary || ""),
+    troubleshooting_answers: payload.troubleshooting_answers || {},
+    troubleshooting_path: Array.isArray(payload.troubleshooting_path) ? payload.troubleshooting_path : [],
+    boiler_error_code: String(payload.boiler_error_code || ""),
+    engineer_required: Boolean(payload.engineer_required || false),
+    request_closed: Boolean(payload.request_closed || false),
+    responsibility_type: String(payload.responsibility_type || ""),
+    alert_type: String(payload.alert_type || ""),
+    final_action: String(payload.final_action || ""),
+    file_urls: fileUrls,
+    file_count: fileUrls.length,
+    submitted_at: String(payload.submitted_at || new Date().toISOString()),
+    make_webhook_sent: false
+  };
+}
+
+/* Save submission record directly to Supabase PostgreSQL */
+async function insertToSupabase(payload) {
+  // 1. Try via Supabase JS client with anon key
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const dbRecord = buildDbRecord(payload);
+      const { data, error } = await client.from(SUPABASE_TABLE).insert([dbRecord]).select();
+      if (!error && data && data.length) {
+        console.log("[Homeview] Supabase row created successfully:", data[0].id);
+        return data[0].id;
+      }
+      if (error) {
+        console.warn("[Homeview] Supabase client insert note:", error.message);
+      }
+    }
+  } catch (clientErr) {
+    console.warn("[Homeview] Supabase client exception:", clientErr);
+  }
+
+  // 2. Direct REST insert with anon key
+  try {
+    const dbRecord = buildDbRecord(payload);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "Prefer": "return=representation"
+      },
+      body: JSON.stringify(dbRecord)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const newId = (Array.isArray(data) && data[0] && data[0].id) ? data[0].id : true;
+      console.log("[Homeview] Supabase REST row created:", newId);
+      return newId;
+    }
+  } catch (err) {
+    console.warn("[Homeview] Supabase REST insert exception:", err);
+  }
+
+  return false;
+}
+
 async function handleSubmit(e) {
   e.preventDefault();
   if (!validateStep(5)) return;
@@ -1430,21 +1574,35 @@ async function handleSubmit(e) {
   const progressWrap = document.getElementById("upload-progress-wrap");
   const progressBar = document.getElementById("upload-progress-bar");
   const progressText = document.getElementById("upload-progress-text");
+
   submitBtn.disabled = true;
   submitText.classList.add("hidden");
   submitSpinner.classList.remove("hidden");
   if (progressWrap) progressWrap.classList.remove("hidden");
   if (progressBar) progressBar.style.width = "0%";
-  if (progressText) progressText.textContent = "Uploading… 0%";
+  if (progressText) progressText.textContent = "Preparing submission… 0%";
 
-  const onUploadProgress = pct => {
+  function updateProgress(pct, label) {
     if (progressBar) progressBar.style.width = pct + "%";
-    if (progressText) progressText.textContent = "Uploading… " + pct + "%";
-  };
+    if (progressText) {
+      progressText.textContent = label || (pct >= 100 ? "Processing…" : `Uploading… ${pct}%`);
+    }
+  }
+
+  // 1. Upload files to Supabase Storage -> public URLs
+  let fileUrls = [];
+  if (state.uploadedFiles && state.uploadedFiles.length > 0) {
+    try {
+      fileUrls = await uploadFilesToSupabase(state.uploadedFiles, updateProgress);
+    } catch (uploadErr) {
+      console.warn("[Homeview] Supabase storage upload warning:", uploadErr);
+    }
+  }
+
+  updateProgress(85, "Saving to database…");
 
   const boilerErr = document.getElementById("boiler_error_code");
   const tsSummary = state.tsQA.map((e, i) => (i + 1) + ". " + e.q + "\n   Answer: " + e.a).join("\n\n");
-
   const submittedAt = new Date().toISOString();
   const finalAction = state.internal.engineer_required ? "engineer_required"
     : state.internal.request_closed ? "self_resolved"
@@ -1469,11 +1627,16 @@ async function handleSubmit(e) {
   }
 
   const payload = {
+    company_name: "Homeview Property Management",
+    company: "Homeview Property Management",
+    brand: "Homeview Property Management",
+    source: "Homeview Maintenance Portal",
     name: document.getElementById("name").value.trim(),
     email: document.getElementById("email").value.trim(),
     phone: document.getElementById("phone").value.trim(),
     address: document.getElementById("address").value.trim(),
     flat_room_number: document.getElementById("flat-room").value.trim(),
+    full_address: [document.getElementById("flat-room").value.trim(), document.getElementById("address").value.trim()].filter(Boolean).join(", "),
     category_id: state.selectedCategory ? state.selectedCategory.id : "",
     category_label: state.selectedCategory ? state.selectedCategory.label : "",
     issue_label: state.selectedIssue ? state.selectedIssue.label : "",
@@ -1495,7 +1658,8 @@ async function handleSubmit(e) {
     troubleshooting_answers: state.ts,
     troubleshooting_summary: tsSummary,
     boiler_error_code: boilerErr ? boilerErr.value : "",
-    uploaded_files_count: state.uploadedFiles.length,
+    file_urls: fileUrls,
+    uploaded_files_count: fileUrls.length,
     uploaded_file_names: state.uploadedFiles.map(f => f.name),
     submitted_at: submittedAt,
     final_action: finalAction
@@ -1510,20 +1674,23 @@ async function handleSubmit(e) {
     }));
   } catch (_) {}
 
-  // 2. Webhook transmission
-  const totalBytes = state.uploadedFiles.reduce((sum, f) => sum + f.size, 0) + JSON.stringify(payload).length;
-  const stopProgress = startEstimatedProgress(totalBytes, onUploadProgress);
-  const sent = await sendWithRetry(payload);
-  stopProgress();
-  onUploadProgress(100);
-  await new Promise(r => setTimeout(r, 200));
+  // 2. Submit to Supabase directly
+  const dbId = await insertToSupabase(payload);
+  if (dbId && typeof dbId === "string") {
+    payload.supabase_id = dbId;
+  }
+
+  // 3. Send all data + file_urls as pure JSON into webhook
+  const sent = await sendWithRetry(payload, updateProgress);
+  updateProgress(100, "Done!");
+  await new Promise(r => setTimeout(r, 250));
 
   submitBtn.disabled = false;
   submitText.classList.remove("hidden");
   submitSpinner.classList.add("hidden");
   if (progressWrap) progressWrap.classList.add("hidden");
 
-  if (sent) {
+  if (sent || dbId) {
     try { localStorage.removeItem("homeview_pending_submission"); } catch (_) {}
     showConfirmation(payload);
   } else {
@@ -1531,24 +1698,17 @@ async function handleSubmit(e) {
   }
 }
 
-// Same-origin relay (see api/submit-report.js). Tried first so the
-// tenant's browser never has to resolve make.com directly — some
-// routers/ISPs block webhook-style domains outright (net::ERR_NAME_NOT_RESOLVED),
-// which no amount of client-side retrying can work around. Falls through to
-// the old direct call below when the relay isn't deployed (e.g. GitHub Pages,
-// which can't run server-side code) or errors.
+// Same-origin relay (see api/submit-report.js). Saves to Supabase and forwards
+// to Make.com server-side. Falls back to direct browser delivery if relay is unavailable.
 const RELAY_URL = "/api/submit-report";
-
-function buildSubmissionBody(payload) {
-  const body = new FormData();
-  body.append("data", JSON.stringify(payload));
-  state.uploadedFiles.forEach(f => body.append("files", f, f.name));
-  return body;
-}
 
 async function sendViaRelay(payload) {
   try {
-    const res = await fetch(RELAY_URL, { method: "POST", body: buildSubmissionBody(payload) });
+    const res = await fetch(RELAY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
     return res.ok;
   } catch (_) {
     return false;
@@ -1557,18 +1717,24 @@ async function sendViaRelay(payload) {
 
 async function sendDirect(payload) {
   try {
-    // mode: 'no-cors' guarantees delivery even when the response can't be
-    // read (see comment history) — used only as the fallback path now.
-    await fetch(WEBHOOK_URL, { method: "POST", body: buildSubmissionBody(payload), mode: "no-cors" });
-    return true;
-  } catch (_) {
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn("[Homeview] sendDirect fetch error:", err);
     return false;
   }
 }
 
-async function sendWithRetry(payload) {
+async function sendWithRetry(payload, onProgress) {
   const MAX = 3;
   for (let attempt = 1; attempt <= MAX; attempt++) {
+    if (onProgress) {
+      onProgress(90 + (attempt * 3), `Forwarding to webhook (attempt ${attempt})…`);
+    }
     if (await sendViaRelay(payload)) return true;
     if (await sendDirect(payload)) return true;
     if (attempt < MAX) {
