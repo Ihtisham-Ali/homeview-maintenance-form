@@ -1519,46 +1519,41 @@ function buildDbRecord(payload) {
 
 /* Save submission record directly to Supabase PostgreSQL */
 async function insertToSupabase(payload) {
-  // 1. Try via Supabase JS client with anon key
-  try {
-    const client = getSupabaseClient();
-    if (client) {
-      const dbRecord = buildDbRecord(payload);
-      const { data, error } = await client.from(SUPABASE_TABLE).insert([dbRecord]).select();
-      if (!error && data && data.length) {
-        console.log("[Homeview] Supabase row created successfully:", data[0].id);
-        return data[0].id;
-      }
-      if (error) {
-        console.warn("[Homeview] Supabase client insert note:", error.message);
-      }
-    }
-  } catch (clientErr) {
-    console.warn("[Homeview] Supabase client exception:", clientErr);
-  }
+  const dbRecord = buildDbRecord(payload);
 
-  // 2. Direct REST insert with anon key
+  // 1. Direct REST insert with anon key and return=minimal (bypasses SELECT RLS)
   try {
-    const dbRecord = buildDbRecord(payload);
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "apikey": SUPABASE_ANON_KEY,
         "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        "Prefer": "return=representation"
+        "Prefer": "return=minimal"
       },
       body: JSON.stringify(dbRecord)
     });
 
     if (res.ok) {
-      const data = await res.json();
-      const newId = (Array.isArray(data) && data[0] && data[0].id) ? data[0].id : true;
-      console.log("[Homeview] Supabase REST row created:", newId);
-      return newId;
+      console.log("[Homeview] Supabase row created successfully (HTTP " + res.status + ")");
+      return true;
     }
   } catch (err) {
     console.warn("[Homeview] Supabase REST insert exception:", err);
+  }
+
+  // 2. Fallback via Supabase JS client
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const { error } = await client.from(SUPABASE_TABLE).insert([dbRecord]);
+      if (!error) {
+        console.log("[Homeview] Supabase JS client insert succeeded");
+        return true;
+      }
+    }
+  } catch (clientErr) {
+    console.warn("[Homeview] Supabase client exception:", clientErr);
   }
 
   return false;
