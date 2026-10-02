@@ -4,8 +4,8 @@
    CONFIG
    ============================================================ */
 const WEBHOOK_URL = "https://hook.eu1.make.com/9nwpq3h5eheub2qaoxn1vmbxd4n81got";
-const SUPABASE_URL = "https://uymidpurzgjqzmqssjuc.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5bWlkcHVyemdqcXptcXNzanVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNjA2OTYsImV4cCI6MjEwNTgzNjY5Nn0.cAhbIiaM4lZxcz8IBxD4We6VRB7_j_2TXMYEaJy8VV0";
+const SUPABASE_URL = "https://dpmzxkxcppqfnkkyysbj.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRwbXp4a3hjcHBxZm5ra3l5c2JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNjM1MzYsImV4cCI6MjEwMjYzOTUzNn0.AL6l_viH44wBb0VgW8TrDxodX505MPcNeEPrp84egqs";
 const SUPABASE_BUCKET = "homereview-files";
 const SUPABASE_TABLE = "homereview_submissions";
 

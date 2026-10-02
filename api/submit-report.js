@@ -6,8 +6,8 @@
 
 export const config = { runtime: "edge" };
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://uymidpurzgjqzmqssjuc.supabase.co";
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5bWlkcHVyemdqcXptcXNzanVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNjA2OTYsImV4cCI6MjEwNTgzNjY5Nn0.cAhbIiaM4lZxcz8IBxD4We6VRB7_j_2TXMYEaJy8VV0";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://dpmzxkxcppqfnkkyysbj.supabase.co";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRwbXp4a3hjcHBxZm5ra3l5c2JqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzA2MzUzNiwiZXhwIjoyMTAyNjM5NTM2fQ.X-nOBdVf013FVJUn9owiPNfHp-Ug-N6NPcVRUOSZ8V0";
 const SUPABASE_TABLE = process.env.SUPABASE_TABLE || "homereview_submissions";
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "https://hook.eu1.make.com/9nwpq3h5eheub2qaoxn1vmbxd4n81got";
 
