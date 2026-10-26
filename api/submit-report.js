@@ -70,6 +70,18 @@ export default async function handler(request) {
 
     const fileUrls = Array.isArray(payload.file_urls) ? payload.file_urls : [];
 
+    const itemId = String(payload.item_id || payload.monday_item_id || payload.monday_property_id || "").trim();
+    const propName = String(payload.selected_property_name || payload.property_name || payload.address || "").trim();
+
+    payload.item_id = itemId;
+    payload.monday_item_id = itemId;
+    payload.monday_property_id = itemId;
+    payload.property_item_id = itemId;
+    payload.selected_property_name = propName;
+    payload.property_name = propName;
+    payload.monday_board_id = payload.monday_board_id || "5099688677";
+    payload.monday_board_name = payload.monday_board_name || "Properties :";
+
     const fullAddress = String(
       payload.full_address ||
       (payload.flat_room_number ? `${payload.flat_room_number}, ${payload.address || ""}` : (payload.address || ""))

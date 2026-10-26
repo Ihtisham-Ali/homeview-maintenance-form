@@ -190,7 +190,14 @@ function setupPropertySearch() {
 
   function selectProperty(prop) {
     input.value = prop.name;
-    if (hiddenId) hiddenId.value = prop.id || "";
+    state.selectedProperty = { id: String(prop.id), name: prop.name };
+    ["monday-property-id", "monday-item-id", "item-id"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = String(prop.id || "");
+    });
+    const nameEl = document.getElementById("selected-property-name");
+    if (nameEl) nameEl.value = prop.name;
+
     if (clearBtn) clearBtn.classList.remove("hidden");
     closeDropdown();
     // Clear validation errors
@@ -309,8 +316,14 @@ function setupPropertySearch() {
       if (val.trim()) clearBtn.classList.remove("hidden");
       else clearBtn.classList.add("hidden");
     }
-    // If text changed, clear matched id unless selected
-    if (hiddenId) hiddenId.value = "";
+    // If text modified and doesn't match selected property, reset selection
+    if (state.selectedProperty && state.selectedProperty.name !== val) {
+      state.selectedProperty = null;
+      ["monday-property-id", "monday-item-id", "item-id", "selected-property-name"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+    }
     filterProperties(val);
   });
 
@@ -347,7 +360,11 @@ function setupPropertySearch() {
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
       input.value = "";
-      if (hiddenId) hiddenId.value = "";
+      state.selectedProperty = null;
+      ["monday-property-id", "monday-item-id", "item-id", "selected-property-name"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
       clearBtn.classList.add("hidden");
       closeDropdown();
       input.focus();
@@ -406,6 +423,7 @@ async function uploadFilesToSupabase(files, onProgress) {
    ============================================================ */
 let state = {
   currentStep: 1,
+  selectedProperty: null,
   selectedCategory: null,
   selectedIssue: null,
   uploadedFiles: [],
@@ -1978,6 +1996,22 @@ async function handleSubmit(e) {
     });
   }
 
+  const addressInputVal = document.getElementById("address").value.trim();
+  const hiddenItemId = (
+    document.getElementById("monday-item-id")?.value ||
+    document.getElementById("monday-property-id")?.value ||
+    document.getElementById("item-id")?.value ||
+    ""
+  ).trim();
+
+  // Match exact item from directory if selected or typed exactly
+  const matchedProp = (state.selectedProperty && state.selectedProperty.name.toLowerCase() === addressInputVal.toLowerCase())
+    ? state.selectedProperty
+    : (mondayProperties.find(p => String(p.id) === hiddenItemId || p.name.toLowerCase() === addressInputVal.toLowerCase()) || null);
+
+  const selectedItemName = matchedProp ? matchedProp.name : addressInputVal;
+  const selectedItemId = matchedProp ? String(matchedProp.id) : hiddenItemId;
+
   const payload = {
     company_name: "Homeview Property Management",
     company: "Homeview Property Management",
@@ -1986,10 +2020,20 @@ async function handleSubmit(e) {
     name: document.getElementById("name").value.trim(),
     email: document.getElementById("email").value.trim(),
     phone: document.getElementById("phone").value.trim(),
-    address: document.getElementById("address").value.trim(),
+    address: addressInputVal,
     flat_room_number: "",
-    full_address: document.getElementById("address").value.trim(),
-    monday_property_id: (document.getElementById("monday-property-id") ? document.getElementById("monday-property-id").value : "").trim(),
+    full_address: addressInputVal,
+
+    // Separate Monday.com item ID and property name fields for Webhook & Make.com
+    item_id: selectedItemId,
+    monday_item_id: selectedItemId,
+    monday_property_id: selectedItemId,
+    property_item_id: selectedItemId,
+    selected_property_name: selectedItemName,
+    property_name: selectedItemName,
+    monday_board_id: MONDAY_BOARD_ID,
+    monday_board_name: "Properties :",
+
     category_id: state.selectedCategory ? state.selectedCategory.id : "",
     category_label: state.selectedCategory ? state.selectedCategory.label : "",
     issue_label: state.selectedIssue ? state.selectedIssue.label : "",
@@ -2224,6 +2268,7 @@ function showConfirmation(payload) {
 function resetForm() {
   state = {
     currentStep: 1,
+    selectedProperty: null,
     selectedCategory: null,
     selectedIssue: null,
     uploadedFiles: [],
@@ -2244,8 +2289,10 @@ function resetForm() {
   };
 
   document.getElementById("repair-form").reset();
-  const mondayIdEl = document.getElementById("monday-property-id");
-  if (mondayIdEl) mondayIdEl.value = "";
+  ["monday-property-id", "monday-item-id", "item-id", "selected-property-name"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
   const propClearBtn = document.getElementById("property-clear-btn");
   if (propClearBtn) propClearBtn.classList.add("hidden");
   const propDropdown = document.getElementById("property-dropdown");
