@@ -227,7 +227,6 @@ function setupPropertySearch() {
     let html = `
       <div class="property-dropdown-header">
         <span>Matching Properties (${matches.length})</span>
-        <span class="board-tag">Monday.com</span>
       </div>
     `;
 
