@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 
 <body>
@@ -116,17 +116,33 @@
               </div>
             </div>
 
-            <div class="field-row">
-              <div class="field-group">
-                <label class="field-label" for="address">Property Address <span class="required-star">*</span></label>
-                <input class="field-input" type="text" id="address" name="address" placeholder="e.g. 123 High Street, London" required />
-                <span class="field-error" id="address-error"></span>
+            <div class="field-group property-search-group">
+              <label class="field-label" for="address">Property Address <span class="required-star">*</span></label>
+              <div class="property-autocomplete-wrap">
+                <span class="property-search-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                </span>
+                <input class="field-input property-input" type="text" id="address" name="address"
+                  placeholder="Start typing your address (e.g. 12 High Street, Flat 4B)…" required autocomplete="off" spellcheck="false" />
+                <div class="property-status-indicator" id="property-status-indicator">
+                  <span class="property-spinner hidden" id="property-spinner" title="Loading directory…"></span>
+                  <button type="button" class="property-clear-btn hidden" id="property-clear-btn" aria-label="Clear property" title="Clear address">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </div>
+                <div class="property-dropdown hidden" id="property-dropdown" role="listbox" aria-label="Matching properties"></div>
               </div>
-              <div class="field-group">
-                <label class="field-label" for="flat-room">Flat / Room Number</label>
-                <input class="field-input" type="text" id="flat-room" name="flat_room" placeholder="e.g. Flat 4B (Optional)" />
-                <span class="field-error" id="flat-room-error"></span>
-              </div>
+              <input type="hidden" id="monday-property-id" name="monday_property_id" />
+              <span class="field-error" id="address-error"></span>
+              <p class="field-hint" id="property-hint">
+                <span class="hint-bullet">💡</span> Start typing to search from properties in your building or street.
+              </p>
             </div>
 
             <div class="step-nav">
@@ -437,7 +453,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="data.js?v=7"></script>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 
 </html>

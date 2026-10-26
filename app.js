@@ -9,6 +9,353 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const SUPABASE_BUCKET = "homereview-files";
 const SUPABASE_TABLE = "homereview_submissions";
 
+/* ============================================================
+   MONDAY.COM PROPERTIES BOARD INTEGRATION
+   Board Name: " Properties :" | Board ID: 5099688677
+   ============================================================ */
+const MONDAY_BOARD_ID = "5099688677";
+// If hosting without Vercel Edge API, you can paste your Monday API key below:
+const MONDAY_API_KEY = "";
+const MONDAY_CACHE_KEY = `homeview_monday_properties_v2_${MONDAY_BOARD_ID}`;
+
+let mondayProperties = [];
+let mondayPropertiesLoaded = false;
+let mondayPropertiesLoading = false;
+let activePropertyIndex = -1;
+let currentPropertyMatches = [];
+
+function updatePropertySpinner(show) {
+  const sp = document.getElementById("property-spinner");
+  if (sp) {
+    if (show) sp.classList.remove("hidden");
+    else sp.classList.add("hidden");
+  }
+}
+
+async function loadPropertiesDirectory() {
+  if (mondayPropertiesLoading) return;
+
+  // 1. Instant load from local cache if valid (< 15 mins)
+  try {
+    const cached = sessionStorage.getItem(MONDAY_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.properties) && parsed.properties.length > 0) {
+        mondayProperties = parsed.properties;
+        mondayPropertiesLoaded = true;
+        console.log(`[Homeview] Loaded ${mondayProperties.length} properties from instant cache`);
+        // If cache is relatively recent (< 5 mins), don't refetch
+        if (Date.now() - (parsed.timestamp || 0) < 5 * 60 * 1000) {
+          return;
+        }
+      }
+    }
+  } catch (cErr) {
+    console.warn("[Homeview] Local property cache read exception:", cErr);
+  }
+
+  mondayPropertiesLoading = true;
+  updatePropertySpinner(true);
+
+  // 2. Fetch from Edge Relay /api/properties (fast & secure serverless cache)
+  let loaded = false;
+  try {
+    const res = await fetch("/api/properties");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.properties) && data.properties.length > 0) {
+        mondayProperties = data.properties;
+        mondayPropertiesLoaded = true;
+        loaded = true;
+        sessionStorage.setItem(MONDAY_CACHE_KEY, JSON.stringify({
+          timestamp: Date.now(),
+          properties: mondayProperties
+        }));
+        console.log(`[Homeview] Loaded ${mondayProperties.length} properties from /api/properties`);
+      }
+    }
+  } catch (edgeErr) {
+    console.warn("[Homeview] /api/properties edge fetch error:", edgeErr);
+  }
+
+  // 3. Fallback: Direct Monday GraphQL fetch if client token is supplied
+  if (!loaded && MONDAY_API_KEY && MONDAY_API_KEY !== "PASTE_YOUR_MONDAY_API_KEY_HERE") {
+    try {
+      const directProps = await fetchDirectFromMonday(MONDAY_API_KEY, MONDAY_BOARD_ID);
+      if (directProps.length > 0) {
+        mondayProperties = directProps;
+        mondayPropertiesLoaded = true;
+        loaded = true;
+        sessionStorage.setItem(MONDAY_CACHE_KEY, JSON.stringify({
+          timestamp: Date.now(),
+          properties: mondayProperties
+        }));
+        console.log(`[Homeview] Loaded ${mondayProperties.length} properties directly from Monday API`);
+      }
+    } catch (directErr) {
+      console.warn("[Homeview] Direct Monday fetch failed:", directErr);
+    }
+  }
+
+  mondayPropertiesLoading = false;
+  updatePropertySpinner(false);
+}
+
+async function fetchDirectFromMonday(token, boardId) {
+  const all = [];
+  let cursor = null;
+  let page = 0;
+  const maxPages = 15;
+
+  do {
+    page++;
+    let query, variables;
+    if (cursor) {
+      query = `query ($cursor: String!, $limit: Int) {
+        next_items_page(cursor: $cursor, limit: $limit) {
+          cursor
+          items { id name }
+        }
+      }`;
+      variables = { cursor, limit: 500 };
+    } else {
+      query = `query ($boardId: [ID!], $limit: Int) {
+        boards(ids: $boardId) {
+          id
+          name
+          items_page(limit: $limit) {
+            cursor
+            items { id name }
+          }
+        }
+      }`;
+      variables = { boardId: [boardId], limit: 500 };
+    }
+
+    const res = await fetch("https://api.monday.com/v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": token,
+        "API-Version": "2024-10"
+      },
+      body: JSON.stringify({ query, variables })
+    });
+
+    if (!res.ok) break;
+    const json = await res.json();
+    let pageItems = [];
+    if (cursor) {
+      pageItems = json?.data?.next_items_page?.items || [];
+      cursor = json?.data?.next_items_page?.cursor || null;
+    } else {
+      pageItems = json?.data?.boards?.[0]?.items_page?.items || [];
+      cursor = json?.data?.boards?.[0]?.items_page?.cursor || null;
+    }
+
+    for (const item of pageItems) {
+      const name = String(item.name || "").trim();
+      if (name) all.push({ id: String(item.id), name });
+    }
+
+    if (!cursor || pageItems.length === 0 || page >= maxPages) break;
+  } while (cursor);
+
+  all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  return all;
+}
+
+function highlightPropertyMatches(text, query) {
+  if (!query) return escHtml(text);
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return escHtml(text);
+  const escaped = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const regex = new RegExp(`(${escaped.join("|")})`, "gi");
+  const safeText = escHtml(text);
+  return safeText.replace(regex, '<mark class="property-highlight">$1</mark>');
+}
+
+function setupPropertySearch() {
+  const input = document.getElementById("address");
+  const dropdown = document.getElementById("property-dropdown");
+  const clearBtn = document.getElementById("property-clear-btn");
+  const hiddenId = document.getElementById("monday-property-id");
+  if (!input || !dropdown) return;
+
+  function closeDropdown() {
+    dropdown.classList.add("hidden");
+    dropdown.innerHTML = "";
+    activePropertyIndex = -1;
+  }
+
+  function selectProperty(prop) {
+    input.value = prop.name;
+    if (hiddenId) hiddenId.value = prop.id || "";
+    if (clearBtn) clearBtn.classList.remove("hidden");
+    closeDropdown();
+    // Clear validation errors
+    const errEl = document.getElementById("address-error");
+    if (errEl) errEl.textContent = "";
+    input.classList.remove("error");
+  }
+
+  function renderSuggestions(matches, query) {
+    currentPropertyMatches = matches;
+    activePropertyIndex = -1;
+
+    if (!matches.length) {
+      dropdown.innerHTML = `
+        <div class="property-dropdown-empty">
+          <div class="property-empty-title">No exact directory match</div>
+          <div class="property-empty-desc">"${escHtml(query)}" was not found in the property directory. You can still use it or continue typing.</div>
+          <button type="button" class="property-custom-use-btn" id="property-use-custom-btn">
+            Use "${escHtml(query)}"
+          </button>
+        </div>
+      `;
+      dropdown.classList.remove("hidden");
+      const useBtn = document.getElementById("property-use-custom-btn");
+      if (useBtn) {
+        useBtn.addEventListener("click", () => {
+          if (hiddenId) hiddenId.value = "";
+          closeDropdown();
+        });
+      }
+      return;
+    }
+
+    let html = `
+      <div class="property-dropdown-header">
+        <span>Matching Properties (${matches.length})</span>
+        <span class="board-tag">Monday.com</span>
+      </div>
+    `;
+
+    matches.slice(0, 40).forEach((prop, idx) => {
+      html += `
+        <div class="property-item" data-index="${idx}" role="option">
+          <div class="property-item-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+          </div>
+          <div class="property-item-name">${highlightPropertyMatches(prop.name, query)}</div>
+        </div>
+      `;
+    });
+
+    dropdown.innerHTML = html;
+    dropdown.classList.remove("hidden");
+
+    dropdown.querySelectorAll(".property-item").forEach(el => {
+      el.addEventListener("click", () => {
+        const idx = parseInt(el.dataset.index, 10);
+        if (currentPropertyMatches[idx]) {
+          selectProperty(currentPropertyMatches[idx]);
+        }
+      });
+    });
+  }
+
+  function updateActiveOption() {
+    const items = dropdown.querySelectorAll(".property-item");
+    items.forEach((item, idx) => {
+      if (idx === activePropertyIndex) {
+        item.classList.add("is-active");
+        item.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      } else {
+        item.classList.remove("is-active");
+      }
+    });
+  }
+
+  function filterProperties(query) {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) {
+      closeDropdown();
+      return;
+    }
+
+    // Trigger load if directory empty
+    if (!mondayProperties.length && !mondayPropertiesLoading && !mondayPropertiesLoaded) {
+      loadPropertiesDirectory();
+    }
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+
+    // Dynamic search: matching item names
+    const matches = mondayProperties.filter(prop => {
+      const name = prop.name.toLowerCase();
+      return tokens.every(token => name.includes(token));
+    });
+
+    // Rank: starts with query first, then alphabetical
+    matches.sort((a, b) => {
+      const aLower = a.name.toLowerCase();
+      const bLower = b.name.toLowerCase();
+      const aStarts = aLower.startsWith(q);
+      const bStarts = bLower.startsWith(q);
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+      return aLower.localeCompare(bLower);
+    });
+
+    renderSuggestions(matches, query);
+  }
+
+  input.addEventListener("input", () => {
+    const val = input.value;
+    if (clearBtn) {
+      if (val.trim()) clearBtn.classList.remove("hidden");
+      else clearBtn.classList.add("hidden");
+    }
+    // If text changed, clear matched id unless selected
+    if (hiddenId) hiddenId.value = "";
+    filterProperties(val);
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value.trim().length >= 1) {
+      filterProperties(input.value);
+    }
+  });
+
+  input.addEventListener("keydown", e => {
+    if (dropdown.classList.contains("hidden")) return;
+
+    const items = dropdown.querySelectorAll(".property-item");
+    if (!items.length) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activePropertyIndex = (activePropertyIndex + 1) % items.length;
+      updateActiveOption();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activePropertyIndex = (activePropertyIndex - 1 + items.length) % items.length;
+      updateActiveOption();
+    } else if (e.key === "Enter") {
+      if (activePropertyIndex >= 0 && currentPropertyMatches[activePropertyIndex]) {
+        e.preventDefault();
+        selectProperty(currentPropertyMatches[activePropertyIndex]);
+      }
+    } else if (e.key === "Escape") {
+      closeDropdown();
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      if (hiddenId) hiddenId.value = "";
+      clearBtn.classList.add("hidden");
+      closeDropdown();
+      input.focus();
+    });
+  }
+}
+
 function getSupabaseClient() {
   if (!window._hrSupabase && window.supabase) {
     window._hrSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -89,6 +436,8 @@ document.addEventListener("DOMContentLoaded", () => {
   buildCategoryGrid();
   buildDatePicker();
   setupDragDrop();
+  setupPropertySearch();
+  loadPropertiesDirectory();
   document.getElementById("repair-form").addEventListener("submit", handleSubmit);
 
   // Close dropdowns on outside click
@@ -98,15 +447,24 @@ document.addEventListener("DOMContentLoaded", () => {
     if (issueWrap && issueDd && !issueWrap.contains(e.target)) {
       issueDd.classList.add("hidden");
     }
+    const propWrap = document.querySelector(".property-autocomplete-wrap");
+    const propDd = document.getElementById("property-dropdown");
+    if (propWrap && propDd && !propWrap.contains(e.target)) {
+      propDd.classList.add("hidden");
+    }
     // Close video modal on backdrop click
     if (e.target.id === "video-modal") {
       closeVideoModal();
     }
   });
 
-  // ESC closes video modal
+  // ESC closes video modal & property dropdown
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeVideoModal();
+    if (e.key === "Escape") {
+      closeVideoModal();
+      const propDd = document.getElementById("property-dropdown");
+      if (propDd) propDd.classList.add("hidden");
+    }
   });
 });
 
@@ -1402,13 +1760,12 @@ function buildReviewGrid() {
     grid.appendChild(div);
   }
 
-  const flatVal = document.getElementById("flat-room").value.trim();
-  const addressFull = document.getElementById("address").value.trim() + (flatVal ? `, Flat/Room: ${flatVal}` : "");
+  const addressVal = (document.getElementById("address") ? document.getElementById("address").value : "").trim();
 
   add("Full Name", document.getElementById("name").value);
   add("Email", document.getElementById("email").value);
   add("Phone", document.getElementById("phone").value);
-  add("Property Address", addressFull, true);
+  add("Property Address", addressVal, true);
 
   add("Category", state.selectedCategory ? state.selectedCategory.label : "—");
   add("Issue Type", state.selectedIssue ? state.selectedIssue.label : "—");
@@ -1486,6 +1843,7 @@ function buildDbRecord(payload) {
     address: String(payload.address || ""),
     flat_room_number: String(payload.flat_room_number || ""),
     full_address: fullAddress,
+    monday_property_id: String(payload.monday_property_id || ""),
     city: "",
     postcode: "",
     category_id: String(payload.category_id || ""),
@@ -1630,8 +1988,9 @@ async function handleSubmit(e) {
     email: document.getElementById("email").value.trim(),
     phone: document.getElementById("phone").value.trim(),
     address: document.getElementById("address").value.trim(),
-    flat_room_number: document.getElementById("flat-room").value.trim(),
-    full_address: [document.getElementById("flat-room").value.trim(), document.getElementById("address").value.trim()].filter(Boolean).join(", "),
+    flat_room_number: "",
+    full_address: document.getElementById("address").value.trim(),
+    monday_property_id: (document.getElementById("monday-property-id") ? document.getElementById("monday-property-id").value : "").trim(),
     category_id: state.selectedCategory ? state.selectedCategory.id : "",
     category_label: state.selectedCategory ? state.selectedCategory.label : "",
     issue_label: state.selectedIssue ? state.selectedIssue.label : "",
@@ -1886,6 +2245,15 @@ function resetForm() {
   };
 
   document.getElementById("repair-form").reset();
+  const mondayIdEl = document.getElementById("monday-property-id");
+  if (mondayIdEl) mondayIdEl.value = "";
+  const propClearBtn = document.getElementById("property-clear-btn");
+  if (propClearBtn) propClearBtn.classList.add("hidden");
+  const propDropdown = document.getElementById("property-dropdown");
+  if (propDropdown) {
+    propDropdown.classList.add("hidden");
+    propDropdown.innerHTML = "";
+  }
   const previews = document.getElementById("upload-previews");
   if (previews) previews.innerHTML = "";
   const tsContainer = document.getElementById("troubleshoot-container");
